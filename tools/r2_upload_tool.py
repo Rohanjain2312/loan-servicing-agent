@@ -44,7 +44,8 @@ def r2_upload_tool(file_path: str, doc_type: str) -> dict:
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         unique_suffix = uuid4().hex[:8]
-        file_name = f"{doc_type}_{timestamp}_{unique_suffix}.pdf"
+        original_stem = os.path.splitext(os.path.basename(file_path))[0]
+        file_name = f"{original_stem}_{timestamp}_{unique_suffix}.pdf"
 
         s3_client = boto3.client(
             "s3",

@@ -92,7 +92,7 @@ def orchestrator_node(state: GlobalState) -> dict:
     input_text = (
         f"Process the PDF at this path: {state['pdf_path']}\n\n"
         "1. Call pdf_extract_tool to get raw text.\n"
-        "2. Call r2_upload_tool to upload the PDF (use doc_type='Unknown' until classified).\n"
+        "2. Call r2_upload_tool to upload the PDF (use doc_type='CA' as a placeholder — the filename is derived from the file path automatically).\n"
         "3. Classify the document as CA or Notice.\n"
         "4. Return JSON with: doc_type (str: CA/Notice/Unknown), raw_text (str), "
         "r2_url (str), error_message (str or null)."
