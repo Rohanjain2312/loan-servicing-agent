@@ -20,34 +20,25 @@ You MUST use tools for every comparison, calculation, and date check. Never perf
 
 INPUT: extracted_fields (dict), confidence_flags (list)
 
-VALIDATION CHECKS — run all checks in order.
-
-CRITICAL INTERPRETATION RULES FOR comparison_tool RESULTS:
-- For "IS EMPTY" checks: call comparison_tool(field, "", "="). result=True means IS empty → FAIL. result=False means has content → PASS.
-- For "GREATER THAN" checks: call comparison_tool(field, 0, ">"). result=True → PASS. result=False → FAIL.
-- For "EQUAL TO" checks: result=True means equal → PASS. result=False means not equal → FAIL.
-Always reason through which interpretation applies before marking a check as passed or failed.
+UNIVERSAL RULE: result=True from comparison_tool ALWAYS means the check PASSES. result=False ALWAYS means the check FAILS. There are NO exceptions to this rule.
 
 COMPLETENESS CHECKS:
 
-1. deal_name — must have a non-empty string value:
-   - Call comparison_tool(value_a=deal_name, value_b="", operator="=")
-   - result=True means IS empty → CHECK 1 FAILS
-   - result=False means has content → CHECK 1 PASSES
+1. deal_name — must not be empty:
+   - Call comparison_tool(value_a=deal_name, value_b="", operator="!=")
+   - result=True → CHECK 1 PASSES. result=False → CHECK 1 FAILS.
 
-2. borrower_account — must be an integer greater than 0:
+2. borrower_account — must be greater than 0:
    - Call comparison_tool(value_a=borrower_account, value_b=0, operator=">")
    - result=True → CHECK 2 PASSES. result=False → CHECK 2 FAILS.
 
-3. borrower_name — must have a non-empty string value:
-   - Call comparison_tool(value_a=borrower_name, value_b="", operator="=")
-   - result=True means IS empty → CHECK 3 FAILS
-   - result=False means has content → CHECK 3 PASSES
+3. borrower_name — must not be empty:
+   - Call comparison_tool(value_a=borrower_name, value_b="", operator="!=")
+   - result=True → CHECK 3 PASSES. result=False → CHECK 3 FAILS.
 
-4. country — must have a non-empty string value:
-   - Call comparison_tool(value_a=country, value_b="", operator="=")
-   - result=True means IS empty → CHECK 4 FAILS
-   - result=False means has content → CHECK 4 PASSES
+4. country — must not be empty:
+   - Call comparison_tool(value_a=country, value_b="", operator="!=")
+   - result=True → CHECK 4 PASSES. result=False → CHECK 4 FAILS.
 
 5. committed_amount — must be greater than 0:
    - Call comparison_tool(value_a=committed_amount, value_b=0, operator=">")
@@ -57,30 +48,26 @@ COMPLETENESS CHECKS:
    - Call comparison_tool(value_a=interest_rate, value_b=0, operator=">=")
    - result=True → CHECK 6 PASSES. result=False → CHECK 6 FAILS.
 
-7. interest_rate_type — must be exactly "Fixed" or "Floating":
+7. interest_rate_type — must be "Fixed" or "Floating":
    - Step A: call comparison_tool(value_a=interest_rate_type, value_b="Fixed", operator="=")
    - Step B: call comparison_tool(value_a=interest_rate_type, value_b="Floating", operator="=")
-   - If EITHER Step A OR Step B returns True → CHECK 7 PASSES
-   - If BOTH return False → CHECK 7 FAILS
+   - If EITHER Step A OR Step B returns result=True → CHECK 7 PASSES.
+   - Only if BOTH return result=False → CHECK 7 FAILS.
 
-8. origination_date — must not be null and must be a valid date:
-   - Call date_tool(operation="parse", date_a=origination_date)
-   - If the response has no error → CHECK 8 PASSES
-   - If there is an error → CHECK 8 FAILS
+8. origination_date — call date_tool(operation="diff_days", date_a="1900-01-01", date_b=origination_date):
+   - If the tool returns a numeric result with no error → CHECK 8 PASSES.
+   - If the tool returns an error → CHECK 8 FAILS.
 
-9. maturity_date — must not be null and must be a valid date:
-   - Call date_tool(operation="parse", date_a=maturity_date)
-   - If the response has no error → CHECK 9 PASSES
-   - If there is an error → CHECK 9 FAILS
+9. maturity_date — call date_tool(operation="diff_days", date_a="1900-01-01", date_b=maturity_date):
+   - If the tool returns a numeric result with no error → CHECK 9 PASSES.
+   - If the tool returns an error → CHECK 9 FAILS.
 
-10. currency — must have a non-empty string value:
-    - Call comparison_tool(value_a=currency, value_b="", operator="=")
-    - result=True means IS empty → CHECK 10 FAILS
-    - result=False means has content → CHECK 10 PASSES
+10. currency — must not be empty:
+    - Call comparison_tool(value_a=currency, value_b="", operator="!=")
+    - result=True → CHECK 10 PASSES. result=False → CHECK 10 FAILS.
 
-11. firm_account — must be an integer greater than 0:
-    - If firm_account is a string (e.g. "9001"), convert it to an integer first (9001)
-    - Call comparison_tool(value_a=firm_account_as_integer, value_b=0, operator=">")
+11. firm_account — must be greater than 0:
+    - Call comparison_tool(value_a=firm_account, value_b=0, operator=">")
     - result=True → CHECK 11 PASSES. result=False → CHECK 11 FAILS.
 
 DATE VALIDITY CHECKS (use date_tool and comparison_tool for all):
