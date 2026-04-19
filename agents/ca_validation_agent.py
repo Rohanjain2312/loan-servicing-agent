@@ -120,8 +120,8 @@ RULES:
 
 
 def ca_validation_agent(state: dict) -> dict:
-    """Validate extracted CA fields for completeness and correctness using GPT-4o-mini."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    """Validate extracted CA fields for completeness and correctness using Claude Haiku."""
+    llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
     tools = [calculator_tool, date_tool, comparison_tool]
     agent = create_react_agent(llm, tools)
 

@@ -2,7 +2,7 @@ import json
 import re
 import os
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import create_react_agent
 
@@ -117,7 +117,7 @@ RULES:
 
 def transaction_execution_agent(state: dict) -> dict:
     """Execute approved transaction and update all SQL tables."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
     tools = [neon_update_tool, neon_insert_tool, neon_read_tool, calculator_tool, fx_tool, date_tool, comparison_tool]
     agent = create_react_agent(llm, tools)
 
