@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "loan_servicing": "./graph/orchestrator.py:app"
+  },
+  "env": ".env"
+}
