@@ -11,7 +11,7 @@ from tools.calculator_tool import calculator_tool
 from tools.date_tool import date_tool
 from tools.comparison_tool import comparison_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the CA Validation Agent in a syndicated loan processing system. Your sole responsibility is to validate extracted CA fields for completeness and correctness before they are stored.
 

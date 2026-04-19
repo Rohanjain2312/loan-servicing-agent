@@ -13,7 +13,7 @@ from tools.neon_read_tool import neon_read_tool
 from tools.neon_update_tool import neon_update_tool
 from tools.calculator_tool import calculator_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the CA SQL Storage Agent in a syndicated loan processing system. Your sole responsibility is to store validated CA data into the correct SQL tables in Neon and upload the CA PDF to Cloudflare R2.
 

@@ -14,7 +14,7 @@ from tools.fx_tool import fx_tool
 from tools.date_tool import date_tool
 from tools.comparison_tool import comparison_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the Transaction Execution Agent in a syndicated loan processing system. Your sole responsibility is to execute approved transactions by updating SQL tables and producing a transaction summary.
 

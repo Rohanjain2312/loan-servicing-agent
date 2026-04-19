@@ -13,7 +13,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import Any
 
-load_dotenv()
+load_dotenv(override=True)
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 

@@ -10,7 +10,7 @@ from langgraph.prebuilt import create_react_agent
 from tools.pdf_extract_tool import pdf_extract_tool
 from tools.confidence_check_tool import confidence_check_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the CA Extraction Agent in a syndicated loan processing system. Your sole responsibility is to extract a specific set of fields from a Credit Agreement (CA) raw text and return them as a structured JSON object.
 

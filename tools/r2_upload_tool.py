@@ -6,7 +6,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from datetime import datetime, timezone
 from uuid import uuid4
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 @tool

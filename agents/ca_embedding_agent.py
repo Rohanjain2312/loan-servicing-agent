@@ -9,7 +9,7 @@ from langgraph.prebuilt import create_react_agent
 
 from tools.embed_and_store_tool import embed_and_store_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the CA Embedding Agent in a syndicated loan processing system. Your sole responsibility is to chunk the full Credit Agreement text structurally, generate embeddings for each chunk, and store them in pgvector with correct metadata.
 

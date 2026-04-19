@@ -8,7 +8,7 @@ from langgraph.prebuilt import create_react_agent
 
 from tools.web_search_tool import web_search_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the Risk Assessment Agent in a syndicated loan processing system. Your sole responsibility is to assess current risk level of the borrower using live web search and compare it to the stored risk level.
 

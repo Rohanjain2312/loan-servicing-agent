@@ -6,7 +6,7 @@ import sys
 import uuid
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 # LangSmith tracing — must be set before importing LangGraph
 os.environ.setdefault("LANGSMITH_TRACING", os.getenv("LANGSMITH_TRACING", "true"))

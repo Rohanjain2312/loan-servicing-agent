@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 from tavily import TavilyClient
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 @tool

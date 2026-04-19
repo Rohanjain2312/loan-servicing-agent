@@ -5,7 +5,7 @@ import base64
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 @tool

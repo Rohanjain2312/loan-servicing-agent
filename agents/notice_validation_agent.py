@@ -12,7 +12,7 @@ from tools.date_tool import date_tool
 from tools.comparison_tool import comparison_tool
 from tools.fuzzy_match_tool import fuzzy_match_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the Notice Validation Agent in a syndicated loan processing system. Your sole responsibility is to run all validation checks on a notice against SQL records and set the correct state fields.
 

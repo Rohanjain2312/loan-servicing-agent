@@ -8,7 +8,7 @@ from langgraph.prebuilt import create_react_agent
 
 from tools.confidence_check_tool import confidence_check_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the Notice Extraction Agent in a syndicated loan processing system. Your sole responsibility is to extract specific fields from a Notice document and classify the notice type.
 

@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime, timezone
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 @tool

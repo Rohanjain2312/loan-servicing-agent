@@ -11,7 +11,7 @@ import psycopg2.extras
 from dotenv import load_dotenv
 from typing import Any
 
-load_dotenv()
+load_dotenv(override=True)
 
 ALLOWED_TABLES = {
     "borrower_account",

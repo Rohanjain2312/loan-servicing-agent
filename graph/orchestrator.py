@@ -17,7 +17,7 @@ from tools.r2_upload_tool import r2_upload_tool
 from graph.ca_branch import ca_app, CAState
 from graph.notice_branch import notice_app, NoticeState
 
-load_dotenv()
+load_dotenv(override=True)
 
 # ---------------------------------------------------------------------------
 # Global state

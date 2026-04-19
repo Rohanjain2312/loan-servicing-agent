@@ -10,7 +10,7 @@ from tools.rag_query_tool import rag_query_tool
 from tools.r2_fetch_tool import r2_fetch_tool
 from tools.date_tool import date_tool
 
-load_dotenv()
+load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the RAG Validation Agent in a syndicated loan processing system. Your sole responsibility is to run 4 specific RAG-based checks against the Credit Agreement vector store and flag discrepancies for human review.
 
