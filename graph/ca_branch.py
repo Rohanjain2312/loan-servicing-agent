@@ -1,12 +1,7 @@
-"""CA subgraph: extraction → validation → [SQL storage ∥ embedding]."""
+"""CA subgraph: extraction → validation → SQL storage → deal_id check → embedding."""
 
 from typing import TypedDict, Optional, Annotated
 from operator import add
-
-
-def _keep_last_error(a: Optional[str], b: Optional[str]) -> Optional[str]:
-    """Reducer for error_message: keep b if set, else keep a. Handles parallel node updates."""
-    return b if b is not None else a
 
 from langgraph.graph import StateGraph, START, END
 
@@ -14,6 +9,11 @@ from agents.ca_extraction_agent import ca_extraction_agent
 from agents.ca_validation_agent import ca_validation_agent
 from agents.ca_sql_storage_agent import ca_sql_storage_agent
 from agents.ca_embedding_agent import ca_embedding_agent
+
+
+def _keep_last_error(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Reducer for error_message: keep b if set, else keep a."""
+    return b if b is not None else a
 
 
 class CAState(TypedDict):
@@ -26,12 +26,12 @@ class CAState(TypedDict):
     # Set by CA Validation Agent
     validation_passed: bool
     validation_errors: Annotated[list, add]
-    # Set by CA SQL Storage Agent (parallel)
+    # Set by CA SQL Storage Agent (must complete before embedding)
     sql_storage_done: bool
     deal_id: Optional[int]
-    # Set by CA Embedding Agent (parallel)
+    # Set by CA Embedding Agent
     embedding_done: bool
-    # Set by any agent on fatal halt — annotated so parallel nodes can both write it
+    # Set by any agent on fatal halt
     error_message: Annotated[Optional[str], _keep_last_error]
 
 
@@ -59,11 +59,21 @@ def ca_end_node(state: CAState) -> dict:
 # Routing
 # ---------------------------------------------------------------------------
 
-def route_after_ca_validation(state: CAState):
-    """Fan out to parallel storage+embedding, or halt on validation failure."""
+def route_after_ca_validation(state: CAState) -> str:
+    """Proceed to SQL storage, or halt on validation failure."""
     if state.get("validation_passed", False):
-        return ["ca_sql_storage_node", "ca_embedding_node"]
+        return "ca_sql_storage_node"
     return "ca_end_node"
+
+
+def route_after_sql_storage(state: CAState) -> str:
+    """Only run embedding if SQL storage succeeded and deal_id was set."""
+    if state.get("error_message"):
+        return "ca_end_node"
+    deal_id = state.get("deal_id")
+    if not deal_id or deal_id <= 0:
+        return "ca_end_node"
+    return "ca_embedding_node"
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +93,14 @@ ca_builder.add_edge("ca_extraction_node", "ca_validation_node")
 ca_builder.add_conditional_edges(
     "ca_validation_node",
     route_after_ca_validation,
-    ["ca_sql_storage_node", "ca_embedding_node", "ca_end_node"],
+    ["ca_sql_storage_node", "ca_end_node"],
 )
-
-# Both parallel nodes converge on ca_end_node
-# LangGraph merges their state updates before ca_end_node fires
-ca_builder.add_edge("ca_sql_storage_node", "ca_end_node")
+# Embedding only runs after SQL storage confirms deal_id is valid
+ca_builder.add_conditional_edges(
+    "ca_sql_storage_node",
+    route_after_sql_storage,
+    ["ca_embedding_node", "ca_end_node"],
+)
 ca_builder.add_edge("ca_embedding_node", "ca_end_node")
 ca_builder.add_edge("ca_end_node", END)
 

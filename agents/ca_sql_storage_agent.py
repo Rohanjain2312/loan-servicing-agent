@@ -89,8 +89,8 @@ RULES:
 
 
 def ca_sql_storage_agent(state: dict) -> dict:
-    """Store validated CA data into Neon SQL tables and handle firm balance updates using GPT-4o-mini."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    """Store validated CA data into Neon SQL tables and handle firm balance updates using Claude Haiku."""
+    llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
     tools = [r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool, calculator_tool]
     agent = create_react_agent(llm, tools)
 
