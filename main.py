@@ -12,7 +12,8 @@ load_dotenv(override=True)
 os.environ.setdefault("LANGSMITH_TRACING", os.getenv("LANGSMITH_TRACING", "true"))
 os.environ.setdefault("LANGSMITH_PROJECT", os.getenv("LANGSMITH_PROJECT", "loan-servicing-agent"))
 
-from graph.orchestrator import app
+from graph.orchestrator import get_cli_app
+app = get_cli_app()
 
 
 def main() -> None:

@@ -39,7 +39,7 @@ results: list[dict] = []
 
 def run_test(name: str, pdf_name: str, expected_doc_type: str) -> None:
     """Run one smoke test."""
-    from graph.orchestrator import app
+    from graph.orchestrator import get_cli_app; app = get_cli_app()
 
     pdf_path = os.path.join(SAMPLE_DIR, pdf_name)
     if not os.path.exists(pdf_path):
@@ -132,7 +132,7 @@ def test_graph_compile() -> None:
     try:
         from graph.ca_branch import ca_app
         from graph.notice_branch import notice_app
-        from graph.orchestrator import app
+        from graph.orchestrator import get_cli_app; app = get_cli_app()
         print(f"  [{_PASS}] {name}")
         results.append({"name": name, "status": "pass"})
     except Exception as exc:

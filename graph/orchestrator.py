@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from tools.pdf_extract_tool import pdf_extract_tool
@@ -218,6 +217,12 @@ main_builder.add_edge("ca_branch", "end_node")
 main_builder.add_edge("notice_branch", "end_node")
 main_builder.add_edge("end_node", END)
 
-# MemorySaver checkpointer enables HIL interrupt/resume via LangSmith Studio
-checkpointer = MemorySaver()
-app = main_builder.compile(checkpointer=checkpointer)
+# Compile without checkpointer — LangGraph API (Studio) injects its own persistence.
+# For CLI use (main.py), call get_cli_app() which adds MemorySaver for HIL support.
+app = main_builder.compile()
+
+
+def get_cli_app():
+    """Return a graph compiled with MemorySaver for local CLI/HIL use."""
+    from langgraph.checkpoint.memory import MemorySaver
+    return main_builder.compile(checkpointer=MemorySaver())
