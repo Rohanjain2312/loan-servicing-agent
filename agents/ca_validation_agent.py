@@ -80,10 +80,14 @@ DATE VALIDITY CHECKS (use date_tool and comparison_tool for all):
     - Call comparison_tool(value_a=<that number>, value_b=0, operator=">")
     - If True → CHECK 13 PASSES. If False → CHECK 13 FAILS
 14. Maturity in future:
-    - Call date_tool(operation="today") to get today's date string
-    - Call date_tool(operation="diff_days", date_a=today_string, date_b=maturity_date)
-    - Extract the numeric "result" and call comparison_tool(value_a=<that number>, value_b=0, operator=">")
-    - If True → CHECK 14 PASSES. If False → CHECK 14 FAILS
+    - Call date_tool(operation="today") to get today's date string (call it TODAY)
+    - Call date_tool(operation="diff_days", date_a=TODAY, date_b=maturity_date)
+    - This computes (maturity_date − TODAY) in days. A positive number means maturity IS in the future.
+    - Extract the numeric "result" (call it DAYS_UNTIL_MATURITY)
+    - Call comparison_tool(value_a=DAYS_UNTIL_MATURITY, value_b=0, operator=">")
+    - result=True means DAYS_UNTIL_MATURITY > 0 → maturity IS in the future → CHECK 14 PASSES.
+    - result=False means DAYS_UNTIL_MATURITY ≤ 0 → maturity is today or in the past → CHECK 14 FAILS.
+    - CRITICAL: If comparison_tool returns result=True, you MUST mark CHECK 14 as PASSED. Do NOT fail it.
 
 NUMERIC VALIDITY CHECKS (use comparison_tool for all):
 15. Use comparison_tool(committed_amount, 0, ">") — committed amount must be positive
