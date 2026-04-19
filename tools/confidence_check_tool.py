@@ -12,9 +12,16 @@ def _score_string(value: str, source_snippet: str) -> float:
 def _score_numeric(value: float | int, source_snippet: str) -> float:
     """Check if the numeric value appears literally in the source snippet."""
     str_val = str(value)
-    # Also check without trailing zeros for floats (e.g. 1000000.0 -> 1000000)
+    # Without trailing zeros for floats (e.g. 1000000.0 -> 1000000)
     alt_val = str(int(value)) if isinstance(value, float) and value == int(value) else None
-    if str_val in source_snippet or (alt_val and alt_val in source_snippet):
+    # Comma-formatted (e.g. 50000000 -> "50,000,000")
+    try:
+        comma_val = f"{int(value):,}"
+    except (ValueError, TypeError):
+        comma_val = None
+    if (str_val in source_snippet
+            or (alt_val and alt_val in source_snippet)
+            or (comma_val and comma_val in source_snippet)):
         return 1.0
     return 0.6
 

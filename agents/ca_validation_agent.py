@@ -29,16 +29,30 @@ COMPLETENESS CHECKS (use comparison_tool for all):
 4. country is not null and not empty string
 5. committed_amount is not null — use comparison_tool(committed_amount, 0, ">") — must be True
 6. interest_rate is not null — use comparison_tool(interest_rate, 0, ">=") — must be True
-7. interest_rate_type is not null and value is exactly "Fixed" or "Floating"
+7. interest_rate_type check — two separate steps:
+   - Step A: call comparison_tool(value_a=interest_rate_type, value_b="Fixed", operator="=")
+   - Step B: call comparison_tool(value_a=interest_rate_type, value_b="Floating", operator="=")
+   - If EITHER Step A OR Step B returns True → CHECK 7 PASSES
+   - If BOTH return False → CHECK 7 FAILS
 8. origination_date is not null and valid date format
 9. maturity_date is not null and valid date format
 10. currency is not null and not empty string
 11. firm_account is not null and is integer > 0
 
 DATE VALIDITY CHECKS (use date_tool and comparison_tool for all):
-12. Use date_tool to parse origination_date and maturity_date
-13. Use comparison_tool(maturity_date, origination_date, ">") — maturity must be after origination
-14. Use date_tool to get today's date. Use comparison_tool(maturity_date, today, ">") — maturity must be in the future
+12. Verify date formats:
+    - Call date_tool(operation="parse", date_a=origination_date) — confirm no error
+    - Call date_tool(operation="parse", date_a=maturity_date) — confirm no error
+13. Maturity after origination — use diff_days:
+    - Call date_tool(operation="diff_days", date_a=origination_date, date_b=maturity_date)
+    - Extract the numeric "result" from the response (days from origination to maturity)
+    - Call comparison_tool(value_a=<that number>, value_b=0, operator=">")
+    - If True → CHECK 13 PASSES. If False → CHECK 13 FAILS
+14. Maturity in future:
+    - Call date_tool(operation="today") to get today's date string
+    - Call date_tool(operation="diff_days", date_a=today_string, date_b=maturity_date)
+    - Extract the numeric "result" and call comparison_tool(value_a=<that number>, value_b=0, operator=">")
+    - If True → CHECK 14 PASSES. If False → CHECK 14 FAILS
 
 NUMERIC VALIDITY CHECKS (use comparison_tool for all):
 15. Use comparison_tool(committed_amount, 0, ">") — committed amount must be positive
