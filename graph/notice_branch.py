@@ -4,6 +4,23 @@ from typing import TypedDict, Optional, Annotated
 from operator import add
 
 
+# ---------------------------------------------------------------------------
+# Input / output schemas — used so the parent graph can add this as a proper
+# subgraph node. LangGraph maps matching keys from GlobalState; internal
+# NoticeState fields are initialised to their channel defaults.
+# ---------------------------------------------------------------------------
+
+class NoticeInputState(TypedDict):
+    """Fields passed in from the parent orchestrator graph."""
+    raw_text: str
+    r2_url: str
+
+
+class NoticeOutputState(TypedDict):
+    """Fields written back to the parent orchestrator graph."""
+    error_message: Optional[str]
+
+
 def _keep_last_error(a: Optional[str], b: Optional[str]) -> Optional[str]:
     """Reducer for error_message: keep b if set, else keep a. Handles parallel node updates."""
     return b if b is not None else a
@@ -251,7 +268,7 @@ def _drawdown_check_passthrough(state: NoticeState) -> dict:
 # Graph
 # ---------------------------------------------------------------------------
 
-notice_builder = StateGraph(NoticeState)
+notice_builder = StateGraph(NoticeState, input_schema=NoticeInputState, output_schema=NoticeOutputState)
 
 # Agent nodes
 notice_builder.add_node("notice_extraction_node", notice_extraction_agent)

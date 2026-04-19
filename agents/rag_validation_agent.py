@@ -26,17 +26,23 @@ CHECKS TO RUN — based on notice_type:
 
 CHECK 1 — Notice Mechanics (ALL notice types — always run this):
 Query: use rag_query_tool(deal_id=deal_record.deal_id, query="notice mechanics delivery requirements timing advance notice period", top_k=5)
-Interpret: Read retrieved clauses. Check if notice delivery method, timing, and any advance notice period requirements stated in CA are consistent with how this notice was submitted (payment_date vs notice_date timing).
-Use date_tool to calculate days between extracted_fields.notice_date and extracted_fields.payment_date.
-If CA states a minimum notice period and the calculated days are less than required:
+Interpret: Read retrieved clauses. Check if notice delivery method, timing, and advance notice period requirements are met.
+Use date_tool with operation="business_days", date_a=extracted_fields.notice_date, date_b=extracted_fields.payment_date to count business days (Mon–Fri) between the two dates.
+If CA requires a minimum business-day notice period AND the calculated business_days result is LESS THAN the required minimum:
 → append to rag_results: {"check": "Notice Mechanics", "triggered": True, "ca_clause": "[exact retrieved text]", "notice_detail": "[relevant notice field]", "llm_explanation": "[2-3 sentence explanation of discrepancy]"}
-Else: append {"check": "Notice Mechanics", "triggered": False}
+If business_days >= required minimum, OR if the CA clause does not specify a minimum period, OR if either date is missing: append {"check": "Notice Mechanics", "triggered": False}
+Do NOT trigger HIL if you cannot determine the requirement from the retrieved clauses — default to triggered: False.
 
 CHECK 2 — Conditions Precedent (Drawdown only):
 Query: use rag_query_tool(deal_id=deal_record.deal_id, query="conditions precedent drawdown utilisation requirements satisfaction", top_k=5)
-Interpret: Read retrieved clauses. Identify any conditions that must be satisfied before a drawdown. Cross-reference with available information (deal status, KYC status, FCC flag). If any CP clause indicates a condition that cannot be confirmed as satisfied:
-→ append to rag_results: {"check": "Conditions Precedent", "triggered": True, "ca_clause": "[exact retrieved text]", "notice_detail": "[what cannot be confirmed]", "llm_explanation": "[2-3 sentence explanation]"}
-Else: append {"check": "Conditions Precedent", "triggered": False}
+Interpret: Read retrieved clauses. Identify conditions that must be satisfied before drawdown. Cross-reference with available information (deal status, kyc_status, fcc_flag in deal_record).
+ONLY trigger HIL if there is POSITIVE EVIDENCE of a violation — for example:
+  • deal_record shows deal status is "Suspended" or "Defaulted" when the CA requires active status
+  • deal_record.kyc_status is explicitly "Failed" or "Pending" when the CA mandates completion
+  • deal_record.fcc_flag is True when the CA prohibits funding flagged borrowers
+If a required field is simply absent or null in deal_record, do NOT flag it as a violation — absence of data is not evidence of non-compliance.
+→ If positive violation found: append {"check": "Conditions Precedent", "triggered": True, "ca_clause": "[exact retrieved text]", "notice_detail": "[specific violation]", "llm_explanation": "[2-3 sentence explanation]"}
+→ Else: append {"check": "Conditions Precedent", "triggered": False}
 
 CHECK 3 — Permitted Purpose (Drawdown only):
 Query: use rag_query_tool(deal_id=deal_record.deal_id, query="permitted purpose use of proceeds borrowing restrictions allowed use", top_k=5)

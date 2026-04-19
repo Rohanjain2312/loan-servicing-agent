@@ -14,7 +14,7 @@ from langgraph.prebuilt import create_react_agent
 from tools.pdf_extract_tool import pdf_extract_tool
 from tools.r2_upload_tool import r2_upload_tool
 from graph.ca_branch import ca_app, CAState
-from graph.notice_branch import notice_app, NoticeState
+from graph.notice_branch import notice_app
 
 load_dotenv(override=True)
 
@@ -154,33 +154,10 @@ def run_ca_branch(state: GlobalState) -> dict:
     return {"error_message": result.get("error_message")}
 
 
-def run_notice_branch(state: GlobalState) -> dict:
-    """Invoke Notice subgraph with the shared fields from global state."""
-    notice_input: NoticeState = {
-        "raw_text": state["raw_text"],
-        "r2_url": state["r2_url"],
-        "notice_type": "",
-        "extracted_fields": {},
-        "confidence_flags": [],
-        "deal_record": {},
-        "borrower_record": {},
-        "risk_assessment_result": {},
-        "risk_hil_triggered": False,
-        "hard_stop": False,
-        "hard_stop_reason": None,
-        "validation_passed": False,
-        "validation_errors": [],
-        "hil_triggered": False,
-        "hil_pending_items": [],
-        "hil_decisions": [],
-        "rag_results": [],
-        "rag_validation_passed": True,
-        "transaction_complete": False,
-        "transaction_summary": {},
-        "error_message": None,
-    }
-    result = notice_app.invoke(notice_input)
-    return {"error_message": result.get("error_message")}
+# notice_branch is added directly as a subgraph node below — no wrapper needed.
+# LangGraph maps raw_text/r2_url from GlobalState → NoticeInputState, and maps
+# error_message from NoticeOutputState → GlobalState on completion/resume.
+# This is required for HIL interrupts to survive Resume in LangSmith Studio.
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +196,7 @@ main_builder = StateGraph(GlobalState, input=InputState)
 
 main_builder.add_node("orchestrator_node", orchestrator_node)
 main_builder.add_node("ca_branch", run_ca_branch)
-main_builder.add_node("notice_branch", run_notice_branch)
+main_builder.add_node("notice_branch", notice_app)  # subgraph node — HIL state persists through resume
 main_builder.add_node("end_node", end_node)
 
 main_builder.add_edge(START, "orchestrator_node")
