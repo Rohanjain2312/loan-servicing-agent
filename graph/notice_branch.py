@@ -3,6 +3,11 @@
 from typing import TypedDict, Optional, Annotated
 from operator import add
 
+
+def _keep_last_error(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Reducer for error_message: keep b if set, else keep a. Handles parallel node updates."""
+    return b if b is not None else a
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
 
@@ -56,8 +61,8 @@ class NoticeState(TypedDict):
     transaction_complete: bool
     transaction_summary: dict
 
-    # Error
-    error_message: Optional[str]
+    # Error — annotated so parallel nodes can both write it
+    error_message: Annotated[Optional[str], _keep_last_error]
 
 
 # ---------------------------------------------------------------------------

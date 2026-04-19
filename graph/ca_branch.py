@@ -3,6 +3,11 @@
 from typing import TypedDict, Optional, Annotated
 from operator import add
 
+
+def _keep_last_error(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    """Reducer for error_message: keep b if set, else keep a. Handles parallel node updates."""
+    return b if b is not None else a
+
 from langgraph.graph import StateGraph, START, END
 
 from agents.ca_extraction_agent import ca_extraction_agent
@@ -26,8 +31,8 @@ class CAState(TypedDict):
     deal_id: Optional[int]
     # Set by CA Embedding Agent (parallel)
     embedding_done: bool
-    # Set by any agent on fatal halt
-    error_message: Optional[str]
+    # Set by any agent on fatal halt — annotated so parallel nodes can both write it
+    error_message: Annotated[Optional[str], _keep_last_error]
 
 
 # ---------------------------------------------------------------------------
