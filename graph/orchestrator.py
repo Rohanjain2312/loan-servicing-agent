@@ -22,6 +22,11 @@ load_dotenv(override=True)
 # Global state
 # ---------------------------------------------------------------------------
 
+class InputState(TypedDict):
+    """Only field the user provides — Studio shows just this one input."""
+    pdf_path: str
+
+
 class GlobalState(TypedDict):
     pdf_path: str
     raw_text: str
@@ -200,7 +205,7 @@ def route_by_doc_type(state: GlobalState) -> str:
 # Main graph
 # ---------------------------------------------------------------------------
 
-main_builder = StateGraph(GlobalState)
+main_builder = StateGraph(GlobalState, input=InputState)
 
 main_builder.add_node("orchestrator_node", orchestrator_node)
 main_builder.add_node("ca_branch", run_ca_branch)
