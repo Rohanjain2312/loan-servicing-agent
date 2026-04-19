@@ -85,7 +85,9 @@ Run all validation checks and return JSON with validation_passed (bool) and vali
         ]
     })
 
-    last_msg = result["messages"][-1].content
+    raw_content = result["messages"][-1].content
+    last_msg = (" ".join(b.get("text","") if isinstance(b,dict) else str(b) for b in raw_content if not isinstance(b,dict) or b.get("type")=="text")
+                if isinstance(raw_content, list) else raw_content)
     try:
         json_match = re.search(r'\{.*\}', last_msg, re.DOTALL)
         output = json.loads(json_match.group()) if json_match else json.loads(last_msg)

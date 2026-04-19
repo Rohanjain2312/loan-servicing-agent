@@ -102,7 +102,17 @@ def orchestrator_node(state: GlobalState) -> dict:
         "messages": [SystemMessage(content=ORCHESTRATOR_PROMPT), HumanMessage(content=input_text)]
     })
 
-    last_msg = result["messages"][-1].content
+    raw_content = result["messages"][-1].content
+    # Claude can return content as a list of blocks — extract text only
+    if isinstance(raw_content, list):
+        last_msg = " ".join(
+            b.get("text", "") if isinstance(b, dict) else str(b)
+            for b in raw_content
+            if not isinstance(b, dict) or b.get("type") == "text"
+        )
+    else:
+        last_msg = raw_content
+
     try:
         json_match = re.search(r'\{.*\}', last_msg, re.DOTALL)
         output = json.loads(json_match.group()) if json_match else json.loads(last_msg)
