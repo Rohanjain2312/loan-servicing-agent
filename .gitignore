@@ -1,0 +1,47 @@
+# Environment / secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+.installed.cfg
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# LangSmith / LangChain cache
+.langchain/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
