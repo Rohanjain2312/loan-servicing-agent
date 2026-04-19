@@ -93,7 +93,12 @@ NUMERIC VALIDITY CHECKS (use comparison_tool for all):
 19. If margin is not null: use comparison_tool(margin, 100, "<") — margin must be less than 100
 
 CONFIDENCE FLAG CHECK:
-20. If confidence_flags contains any of these critical fields: deal_name, borrower_account, committed_amount, currency, interest_rate, origination_date, maturity_date, firm_account — set validation_passed = False and add to validation_errors
+20. The ONLY critical fields are: deal_name, borrower_account, committed_amount, currency, interest_rate, origination_date, maturity_date, firm_account.
+    - Fields like fees_applicable, fcc_flag, kyc_status, margin are NOT critical — ignore them completely.
+    - Find which of the 8 critical fields above appear in confidence_flags.
+    - If NONE of them appear → CHECK 20 PASSES.
+    - If ANY of them appear → CHECK 20 FAILS. Error message MUST name the specific fields:
+      "CHECK 20 FAILED: confidence_flags — low confidence on critical fields: [<list each failing field name>]. Review extraction for these fields."
 
 OUTPUT:
 - If ALL checks pass: set validation_passed = True, validation_errors = []

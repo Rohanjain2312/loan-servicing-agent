@@ -26,13 +26,15 @@ def _score_numeric(value: float | int, source_snippet: str) -> float:
     return 0.6
 
 
-def _score_bool(field_name: str, source_snippet: str) -> float:
+def _score_bool(field_name: str, value: bool, source_snippet: str) -> float:
     """Check if a boolean indicator appears near the field name in the source snippet."""
     bool_indicators = re.compile(
-        r"\b(true|false|yes|no)\b", re.IGNORECASE
+        r"\b(true|false|yes|no|complete|incomplete|active|inactive|enabled|disabled)\b",
+        re.IGNORECASE,
     )
-    # Look for the field name vicinity (case-insensitive)
-    field_pattern = re.compile(re.escape(field_name), re.IGNORECASE)
+    # Normalize field_name: underscores → spaces so "fcc_flag" matches "FCC Flag"
+    field_display = field_name.replace("_", " ")
+    field_pattern = re.compile(re.escape(field_display), re.IGNORECASE)
     if field_pattern.search(source_snippet) and bool_indicators.search(source_snippet):
         return 0.9
     if bool_indicators.search(source_snippet):
@@ -79,7 +81,7 @@ def confidence_check_tool(
 
         # Bool check must come before int/float because bool is a subclass of int in Python
         if isinstance(extracted_value, bool):
-            score = _score_bool(field_name, source_snippet)
+            score = _score_bool(field_name, extracted_value, source_snippet)
 
         elif isinstance(extracted_value, (int, float)):
             score = _score_numeric(extracted_value, source_snippet)
