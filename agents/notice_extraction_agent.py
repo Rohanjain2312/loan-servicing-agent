@@ -59,24 +59,57 @@ CONFIDENCE CHECKING:
 After extracting each field, call confidence_check_tool with field name, value, and source snippet. If score < 0.75, add field to confidence_flags.
 
 OUTPUT FORMAT:
+Always include ALL fields applicable to the identified notice_type inside extracted_fields.
+
+For Drawdown notice:
 {
-  "notice_type": "",
+  "notice_type": "Drawdown",
   "extracted_fields": {
-    "deal_name": "",
-    "deal_id": null,
-    "notice_date": "YYYY-MM-DD",
-    "payment_date": "YYYY-MM-DD",
-    "currency": "",
-    "borrower_name": "",
-    "borrower_account": 0,
-    "amount": 0.0
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "drawdown_amount": 0.0, "purpose_of_drawdown": ""
+  },
+  "confidence_flags": []
+}
+
+For Repayment notice:
+{
+  "notice_type": "Repayment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "repayment_amount": 0.0, "is_full_repayment": false
+  },
+  "confidence_flags": []
+}
+
+For Interest Payment notice:
+{
+  "notice_type": "Interest Payment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "interest_amount": 0.0, "interest_period_start": "YYYY-MM-DD", "interest_period_end": "YYYY-MM-DD",
+    "interest_rate_applied": 0.0, "principal_amount_used": 0.0
+  },
+  "confidence_flags": []
+}
+
+For Fee Payment notice:
+{
+  "notice_type": "Fee Payment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "fee_amount": 0.0, "fee_type": ""
   },
   "confidence_flags": []
 }
 
 RULES:
 - Classify notice_type before extracting fields
-- Extract ONLY the fields listed for the identified notice type — do not extract CA fields
+- Always output ALL fields shown in the template for the identified notice_type — never omit type-specific fields
+- Use null for fields that genuinely cannot be found in the document
 - Do not re-classify whether document is CA or Notice — that was already done by orchestrator
 - Never infer or guess field values — only extract what is explicitly stated
 - Never perform validation
