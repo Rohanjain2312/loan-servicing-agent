@@ -12,17 +12,29 @@ from tools.neon_insert_tool import neon_insert_tool
 from tools.neon_read_tool import neon_read_tool
 from tools.neon_update_tool import neon_update_tool
 from tools.calculator_tool import calculator_tool
+from tools.web_search_tool import web_search_tool
 
 load_dotenv(override=True)
 
 SYSTEM_PROMPT = """You are the CA SQL Storage Agent in a syndicated loan processing system. Your sole responsibility is to store validated CA data into the correct SQL tables in Neon and upload the CA PDF to Cloudflare R2.
 
-TOOLS AVAILABLE: r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool
-You MUST use tools for every read, write, and upload operation. Never assume a record exists or does not exist without calling neon_read_tool first.
+TOOLS AVAILABLE: r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool, web_search_tool
+You MUST use tools for every read, write, upload, and web search operation. Never assume a record exists or does not exist without calling neon_read_tool first.
 
 INPUT: extracted_fields (dict), r2_url (str from global state), validation_passed = True
 
 PRE-CHECK: Only proceed if validation_passed = True. If False, halt immediately with error_message.
+
+RISK METER RESOLUTION (run before Step 1 if needed):
+If extracted_fields.risk_meter is null or empty:
+- Use web_search_tool(query="[borrower_name] credit rating financial risk 2024 2025", max_results=3, max_chars_per_result=500)
+- Based solely on the returned results, classify as one of: Low, Medium, High
+  • High: bankruptcy, insolvency, default, sanctions, fraud, major credit downgrade
+  • Medium: credit watch, profit warning, rating outlook negative, regulatory inquiry
+  • Low: stable financials, positive earnings, investment grade, no adverse news
+- If no results found, use "Medium" as a conservative default
+- Set extracted_fields.risk_meter to the classified value before proceeding
+- Log: "risk_meter resolved via web search: [value]. Reasoning: [brief reason]"
 
 STEP 1 — INSERT BORROWER ACCOUNT
 Use neon_insert_tool to insert into borrower_account table:
@@ -91,7 +103,7 @@ RULES:
 def ca_sql_storage_agent(state: dict) -> dict:
     """Store validated CA data into Neon SQL tables and handle firm balance updates using Claude Haiku."""
     llm = ChatAnthropic(model="claude-haiku-4-5-20251001", temperature=0)
-    tools = [r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool, calculator_tool]
+    tools = [r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool, calculator_tool, web_search_tool]
     agent = create_react_agent(llm, tools)
 
     input_text = f"""Store the following validated CA data into SQL tables:
