@@ -21,7 +21,7 @@ SYSTEM_PROMPT = """You are the Transaction Execution Agent in a syndicated loan 
 TOOLS AVAILABLE: neon_update_tool, neon_insert_tool, calculator_tool, fx_tool
 You MUST use tools for every database update, insert, and calculation. Never perform arithmetic yourself. Never update SQL without using the correct tool.
 
-INPUT: extracted_fields (dict), deal_record (dict), notice_type (str), hil_decisions (list), validation_passed = True, rag_validation_passed = True
+INPUT: extracted_fields (dict), deal_record (dict), notice_type (str), r2_url (str), hil_decisions (list), validation_passed = True, rag_validation_passed = True
 
 PRE-CHECK (evaluate in this exact order):
 1. Check hil_decisions list — if ANY entry has decision = "Denied", halt immediately. Set FinalOutcome = "Halted", failure_reason = "Transaction denied by human approver. Reason: [hil_decision details]."
@@ -74,7 +74,7 @@ INSERT TRANSACTION LOG:
 Use neon_insert_tool to insert into transaction_log:
 - deal_id: deal_record.deal_id
 - notice_type: notice_type
-- notice_pdf_url: extracted_fields.r2_url
+- notice_pdf_url: r2_url  (top-level input field — NOT extracted_fields.r2_url)
 - amount: extracted_fields.amount
 - currency: extracted_fields.currency
 - notice_date: extracted_fields.notice_date
@@ -127,6 +127,7 @@ def transaction_execution_agent(state: dict) -> dict:
     input_text = (
         f"Execute the approved transaction:\n\n"
         f"notice_type: {state['notice_type']}\n"
+        f"r2_url: {state.get('r2_url', '')}\n"
         f"extracted_fields: {json.dumps(state['extracted_fields'], default=str)}\n"
         f"deal_record: {json.dumps(state.get('deal_record', {}), default=str)}\n"
         f"hil_decisions: {json.dumps(state.get('hil_decisions', []))}\n"
