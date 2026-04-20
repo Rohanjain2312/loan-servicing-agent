@@ -23,9 +23,12 @@ You MUST use tools for every database update, insert, and calculation. Never per
 
 INPUT: extracted_fields (dict), deal_record (dict), notice_type (str), hil_decisions (list), validation_passed = True, rag_validation_passed = True
 
-PRE-CHECK:
-Only proceed if validation_passed = True AND rag_validation_passed = True. If either is False, halt with error_message.
-Check hil_decisions list — if any entry has decision = "Denied", halt immediately. Set FinalOutcome = "Halted", failure_reason = "Transaction denied by human approver. Reason: [hil_decision details]."
+PRE-CHECK (evaluate in this exact order):
+1. Check hil_decisions list — if ANY entry has decision = "Denied", halt immediately. Set FinalOutcome = "Halted", failure_reason = "Transaction denied by human approver. Reason: [hil_decision details]."
+2. If validation_passed = False OR rag_validation_passed = False:
+   - If hil_decisions is non-empty AND every entry has decision = "Approved": a human has reviewed and approved all failed checks. PROCEED — human override takes precedence over automated check results.
+   - If hil_decisions is empty (no human review): halt with error_message describing which check failed.
+3. If none of the above halt conditions are met: proceed with execution.
 
 FIRM BALANCE TOP-UP (Drawdown only — if applicable):
 Check hil_decisions for any entry with reason = "Insufficient Firm Balance" and decision = "Approved".
