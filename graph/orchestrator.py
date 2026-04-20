@@ -198,7 +198,13 @@ def risk_hil_node(state: GlobalState) -> dict:
         **state.get("risk_assessment_result", {}),
     }
     decision = interrupt(payload)
-    decision_str = decision.get("decision", "Denied") if isinstance(decision, dict) else "Denied"
+    # Handle dict {"decision": "Approved"}, plain string "Approved", or empty/null
+    if isinstance(decision, dict):
+        decision_str = decision.get("decision", "Denied")
+    elif decision:
+        decision_str = str(decision).strip()
+    else:
+        decision_str = "Denied"  # empty input = conservative default for risk escalation
     return {
         "hil_decisions": [
             {
@@ -218,7 +224,13 @@ def validation_hil_node(state: GlobalState) -> dict:
         "items": state.get("hil_pending_items", []),
     }
     decision = interrupt(payload)
-    decision_str = decision.get("decision", "Approved") if isinstance(decision, dict) else str(decision) if decision else "Approved"
+    decision_str = decision.get("decision", "Approved") if isinstance(decision, dict) else str(decision).strip() if decision else "Approved"
+    items = state.get("hil_pending_items", [])
+    # Guard: if rag_validation_passed=False triggered this node but items list is somehow
+    # empty, add a synthetic entry so hil_decisions is non-empty and the pre-check in
+    # transaction_execution_agent can see the human approved the override.
+    if not items:
+        items = [{"reason": "RAG/Validation Override", "details": {"rag_validation_passed": state.get("rag_validation_passed", True)}}]
     return {
         "hil_decisions": [
             {
@@ -226,7 +238,7 @@ def validation_hil_node(state: GlobalState) -> dict:
                 "decision": decision_str,
                 "details": item.get("details", {}),
             }
-            for item in state.get("hil_pending_items", [])
+            for item in items
         ]
     }
 
