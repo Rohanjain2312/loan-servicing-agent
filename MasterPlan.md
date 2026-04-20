@@ -51,7 +51,7 @@ Build a multi-agent AI system for processing syndicated loan documents. System r
 | Agent framework | LangGraph |
 | Tracing & observability | LangSmith |
 | Orchestrator model | Claude Sonnet |
-| Sub-agent model | GPT-4o-mini |
+| Sub-agent models | GPT-4o-mini (CA Extraction, Notice Extraction); Claude Haiku (CA Validation, CA SQL Storage, Notice Validation, Transaction Execution) |
 | PDF extraction | Tools-based (not raw LLM reading) |
 | Primary DB + Vector DB | Neon (PostgreSQL + pgvector) |
 | PDF storage | Cloudflare R2 (free, no egress fees) |
@@ -73,12 +73,12 @@ Build a multi-agent AI system for processing syndicated loan documents. System r
 |-------|---------------|-------|-------|
 | CA Extraction Agent | Extract all CA fields using PyMuPDF, return structured JSON | `pdf_extract_tool`, `confidence_check_tool` | GPT-4o-mini |
 | CA Validation Agent | Check all extracted fields present and valid, no missing critical fields | `calculator_tool`, `date_tool`, `comparison_tool` | GPT-4o-mini |
-| CA SQL Storage Agent | Upload PDF to R2, insert rows into Borrower Account + Loan Info, check and insert/update Firm Balance row | `r2_upload_tool`, `neon_insert_tool`, `neon_read_tool`, `neon_update_tool` | GPT-4o-mini |
+| CA SQL Storage Agent | Insert rows into Borrower Account + Loan Info, check and insert/update Firm Balance row. Resolves null risk_meter via web search before insert. | `r2_upload_tool`, `neon_insert_tool`, `neon_read_tool`, `neon_update_tool`, `calculator_tool`, `web_search_tool` | Claude Haiku |
 | CA Embedding Agent | Chunk full CA structurally, generate embeddings, store in pgvector with metadata | `embed_and_store_tool` | GPT-4o-mini |
 
-CA SQL Storage Agent and CA Embedding Agent run in parallel after CA Validation Agent completes.
+CA SQL Storage Agent and CA Embedding Agent run **sequentially** (storage first, embedding second — embedding requires deal_id returned by storage).
 
-CA Flow: Main Orchestrator → CA Extraction Agent → CA Validation Agent → [CA SQL Storage Agent ∥ CA Embedding Agent] → done
+CA Flow: Main Orchestrator → CA Extraction Agent → CA Validation Agent → [CA Confidence HIL? (low-confidence critical fields)] → CA SQL Storage Agent → CA Embedding Agent → done
 
 ### Notice Branch
 | Agent | Responsibility | Tools | Model |
@@ -110,7 +110,7 @@ Notice Flow: Main Orchestrator → Notice Extraction Agent → Risk Assessment A
 | `fx_tool` | Get real-time FX rate, convert currency amounts | Execution agent |
 | `fuzzy_match_tool` | Match deal name from notice to deal name in SQL | Notice Validation agent |
 | `comparison_tool` | Deterministic comparisons (< > = !=) on two values, returns True/False | Validation agents |
-| `web_search_tool` | Tavily search — borrower news, max 3 results, 500 chars each | Risk Assessment agent |
+| `web_search_tool` | Tavily search — borrower news, max 3 results, 500 chars each | Risk Assessment agent; CA SQL Storage agent (risk_meter fallback) |
 
 ---
 
@@ -173,6 +173,7 @@ All HIL triggers are uniform. Any user can approve or deny.
 
 | Trigger | Details Shown |
 |---------|--------------|
+| CA low confidence critical fields | field_name, extracted_value (what agent inferred), source_snippet (exact CA text), confidence_score — user approves or denies before storage |
 | Drawdown notice received | Full drawdown details, amount, deal info |
 | RAG — Conditions Precedent | CA clause text, notice content, LLM explanation |
 | RAG — Permitted Purpose | CA clause text, notice content, LLM explanation |
@@ -453,24 +454,53 @@ Option B — thin global state for orchestrator, branch-specific states passed i
 | `raw_text` | str | Orchestrator via `pdf_extract_tool` | Extraction agents |
 | `doc_type` | str (CA / Notice) | Orchestrator after reading raw_text | Orchestrator routing edge |
 | `r2_url` | str | Orchestrator via `r2_upload_tool` | CA SQL Storage agent, Notice Extraction agent |
-| `error_message` | str | Any agent on fatal halt | End node |
+| `error_message` | Annotated[Optional[str], keep_last] | Any agent on fatal halt | End node |
+| **CA branch fields** | | | |
+| `extracted_fields` | dict | ca_branch subgraph | CA SQL Storage, CA Embedding |
+| `confidence_flags` | list | ca_branch subgraph | ca_confidence_hil_node |
+| `validation_passed` | bool | ca_branch subgraph | route_after_ca_branch |
+| `validation_errors` | Annotated[list, add] | ca_branch subgraph | ca_end_node |
+| `ca_hil_triggered` | bool | ca_branch subgraph | route_after_ca_branch |
+| `ca_hil_items` | list | ca_branch subgraph | ca_confidence_hil_node |
+| `ca_hil_decisions` | Annotated[list, add] | ca_confidence_hil_node | route_after_ca_hil, ca_end_node |
+| `deal_id` | Optional[int] | ca_sql_storage_node | ca_embedding_node, route_after_ca_sql |
+| `ca_sql_storage_done` | bool | ca_sql_storage_node | ca_end_node |
+| `ca_embedding_done` | bool | ca_embedding_node | ca_end_node |
+| **Notice branch fields** | | | |
+| `notice_type` | str | notice_branch subgraph | routing edges |
+| `deal_record` | dict | notice_branch subgraph | HIL nodes, transaction_execution |
+| `borrower_record` | dict | notice_branch subgraph | notice validation |
+| `risk_assessment_result` | dict | notice_branch subgraph | risk_hil_node |
+| `risk_hil_triggered` | bool | notice_branch subgraph | route_after_notice_processing |
+| `hard_stop` | bool | notice_branch subgraph | route_after_notice_processing |
+| `hard_stop_reason` | Optional[str] | notice_branch subgraph | notice_end_node |
+| `hil_triggered` | bool | notice_branch subgraph / HIL nodes | routing edges |
+| `hil_pending_items` | Annotated[list, add] | notice_branch subgraph | validation_hil_node |
+| `rag_results` | list | notice_branch subgraph | RAG HIL payload |
+| `rag_validation_passed` | bool | notice_branch subgraph | route_after_notice_processing |
+| `hil_decisions` | Annotated[list, add] | HIL nodes | transaction_execution_node |
+| `transaction_complete` | bool | transaction_execution_node | notice_end_node |
+| `transaction_summary` | dict | transaction_execution_node | notice_end_node |
 
 ---
 
-### CA State (subgraph)
+### CA State (subgraph — extract + validate only)
+
+The CA subgraph is a **pure compute subgraph** — it only runs extraction and validation. All HIL interrupt() calls, SQL storage, and embedding live in the parent orchestrator so LangSmith Studio Resume works correctly.
 
 | Field | Type | Set By | Read By |
 |-------|------|--------|---------|
 | `raw_text` | str | Passed from global state | CA Extraction agent |
-| `r2_url` | str | Passed from global state | CA SQL Storage agent |
+| `r2_url` | str | Passed from global state | (passed through to output) |
 | `extracted_fields` | dict | CA Extraction agent | CA Validation agent |
-| `confidence_flags` | list | CA Extraction agent | CA Validation agent |
-| `validation_passed` | bool | CA Validation agent | Routing edge to storage |
-| `validation_errors` | list | CA Validation agent | End node if failed |
-| `sql_storage_done` | bool | CA SQL Storage agent | Final end node |
-| `embedding_done` | bool | CA Embedding agent | Final end node |
-| `deal_id` | int | CA SQL Storage agent after insert | CA Embedding agent |
-| `error_message` | str | Any agent on fatal halt | End node |
+| `confidence_flags` | list[dict] | CA Extraction agent | CA Validation agent |
+| `validation_passed` | bool | CA Validation agent | Parent routing edge |
+| `validation_errors` | Annotated[list, add] | CA Validation agent | ca_end_node if failed |
+| `ca_hil_triggered` | bool | CA Validation agent (CHECK 20) | Parent routing edge |
+| `ca_hil_items` | list[dict] | CA Validation agent (CHECK 20) | ca_confidence_hil_node |
+| `error_message` | Annotated[Optional[str], keep_last] | Any agent on fatal halt | ca_end_node |
+
+`confidence_flags` format: `[{"field_name": str, "extracted_value": any, "source_snippet": str, "confidence_score": float}]`
 
 ---
 
@@ -504,92 +534,84 @@ Option B — thin global state for orchestrator, branch-specific states passed i
 
 ### CA Nodes + Edges
 
+CA subgraph (ca_branch) runs extraction + validation only. All interrupt() calls and execution nodes live in the parent orchestrator.
+
 ```
-[START]
-   │
+[orchestrator_node] — classifies PDF, uploads to R2
+   │ doc_type = CA
    ▼
-[ca_extraction_node] — CA Extraction Agent
-   │ sets: extracted_fields, confidence_flags
-   ▼
-[ca_validation_node] — CA Validation Agent
-   │ sets: validation_passed, validation_errors
+[ca_branch subgraph] — pure computation: extract + validate
+   │  ca_extraction_node → ca_validation_node
+   │  sets: extracted_fields, confidence_flags, validation_passed,
+   │        validation_errors, ca_hil_triggered, ca_hil_items
    │
-   ├─ validation_passed = False ──→ [ca_end_node] log error, halt
+   ├─ error or validation_passed = False ──→ [ca_end_node] halt
    │
-   └─ validation_passed = True
-        │
-        ├──→ [ca_sql_storage_node] — CA SQL Storage Agent (parallel)
-        │         sets: sql_storage_done, deal_id
-        │
-        └──→ [ca_embedding_node] — CA Embedding Agent (parallel)
-                  sets: embedding_done
-        │
-        ▼ (both parallel nodes complete)
-   [ca_end_node] — log success, return confirmation
+   ├─ ca_hil_triggered = True ──→ [ca_confidence_hil_node] interrupt()
+   │         shows: field_name, extracted_value, source_snippet, confidence_score
+   │         ├─ Denied  ──→ [ca_end_node] halt
+   │         └─ Approved ──→ [ca_sql_storage_node]
+   │
+   └─ ca_hil_triggered = False ──→ [ca_sql_storage_node]
+                                     CA SQL Storage Agent
+                                     (resolves null risk_meter via web search)
+                                     sets: sql_storage_done, deal_id
+                                     │
+                                     ├─ error or no deal_id ──→ [ca_end_node]
+                                     │
+                                     └─ deal_id valid ──→ [ca_embedding_node]
+                                                            CA Embedding Agent
+                                                            sets: embedding_done
+                                                            │
+                                                            ▼
+                                                       [ca_end_node] → [end_node]
 ```
 
 ---
 
 ### Notice Nodes + Edges
 
+Notice subgraph (notice_branch) runs extraction + risk + validation only. All interrupt() calls and transaction execution live in the parent orchestrator.
+
 ```
-[START]
-   │
+[orchestrator_node] — classifies PDF, uploads to R2
+   │ doc_type = Notice
    ▼
-[notice_extraction_node] — Notice Extraction Agent
-   │ sets: extracted_fields, notice_type, confidence_flags
-   ▼
-[risk_assessment_node] — Risk Assessment Agent
-   │ sets: risk_assessment_result, risk_hil_triggered
+[notice_branch subgraph] — pure computation: extract + risk + validate (parallel)
+   │  notice_extraction_node → risk_assessment_node
+   │                         → [notice_validation_node ∥ rag_validation_node]
+   │  sets: extracted_fields, notice_type, deal_record, borrower_record,
+   │        risk_assessment_result, risk_hil_triggered,
+   │        hard_stop, hard_stop_reason,
+   │        hil_triggered, hil_pending_items,
+   │        rag_results, rag_validation_passed
    │
-   ├─ risk escalated to High
-   │      │
-   │      ▼
-   │   [hil_node] — interrupt(), show news + reasoning + current vs new risk
-   │      ├─ denied → [notice_end_node] log reason, halt
-   │      └─ approved → continue
+   ├─ hard_stop = True ──→ [notice_end_node] log hard_stop_reason, halt
    │
-   └─ risk not escalated
-        │
-        ├──→ [notice_validation_node] — Notice Validation Agent (parallel)
-        │         sets: validation_passed, validation_errors, hil_triggered, hil_reason
-        │         deal_record, borrower_record fetched here
-        │
-        └──→ [rag_validation_node] — RAG Validation Agent (parallel)
-                  sets: rag_results, rag_validation_passed
-        │
-        ▼ (both parallel nodes complete)
-   [validation_merge_node] — pure logic node, no LLM
-        │ Priority order: hard stops checked first, then HIL, then proceed
-        │
-        ├─ hard_stop = True
-        │      └──→ [notice_end_node] log hard_stop_reason, halt immediately
-        │
-        ├─ hil_triggered = True (no hard stop)
-        │      │
-        │      ▼
-        │   [hil_node] — interrupt(), show hil_pending_items details + reason
-        │      ├─ denied → [notice_end_node] log reason + summary, halt
-        │      └─ approved → append to hil_decisions, continue to execution
-        │
-        └─ all passed, no hard stop, no HIL
-             │
-             ▼
-        [transaction_execution_node] — Transaction Execution Agent
-             │ sets: transaction_complete, transaction_summary
-             │ updates: Funded, Firm Balance, Status, Transaction Log
-             │
-             ├─ notice_type = Drawdown (always HIL)
-             │      │
-             │      ▼
-             │   [hil_node] — interrupt(), show full transaction details
-             │      ├─ denied → [notice_end_node] log reason, halt
-             │      └─ approved → execute, then [notice_end_node] success
-             │
-             └─ notice_type != Drawdown
-                  │
-                  ▼
-             [notice_end_node] — log success, return transaction_summary
+   ├─ risk_hil_triggered = True ──→ [risk_hil_node] interrupt()
+   │         shows: news summary, reasoning, current vs new risk
+   │         ├─ Denied  ──→ [notice_end_node] halt
+   │         └─ Approved → check for validation HIL or proceed to drawdown check
+   │
+   ├─ hil_pending_items not empty or rag_validation_passed = False
+   │         ──→ [validation_hil_node] interrupt()
+   │              shows: all pending HIL items (borrower mismatch, KYC, FCC, balance, rate, amount, RAG)
+   │              ├─ Denied  ──→ [notice_end_node] halt
+   │              └─ Approved ──→ [drawdown_check_node]
+   │
+   └─ all passed ──→ [drawdown_check_node]
+                       │
+                       ├─ notice_type = Drawdown ──→ [drawdown_hil_node] interrupt()
+                       │         shows: drawdown details, deal state, available amount
+                       │         ├─ Denied  ──→ [notice_end_node] halt
+                       │         └─ Approved ──→ [transaction_execution_node]
+                       │
+                       └─ notice_type != Drawdown ──→ [transaction_execution_node]
+                                                        sets: transaction_complete, transaction_summary
+                                                        updates: Funded, Firm Balance, Status, Transaction Log
+                                                        │
+                                                        ▼
+                                                   [notice_end_node] → [end_node]
 ```
 
 Note: Multiple sequential HIL interrupts can occur in one run. Each HIL pause is independent. LangGraph checkpointer preserves full state between interrupts.
@@ -701,7 +723,8 @@ FIELD LIST WITH ALTERNATIVE LABELS:
 19. firm_account — look for: "Bank Account", "Lender Account", "Firm Account", "Bank Reference", "Agent Account Number"
 
 CONFIDENCE CHECKING:
-After extracting each field, call confidence_check_tool with the field name, extracted value, and the source text snippet where you found it. confidence_check_tool returns a confidence score. If score < 0.75 for any field, add that field name to the confidence_flags list.
+After extracting each field, call confidence_check_tool with the field name, extracted value, and the source text snippet where you found it. confidence_check_tool returns a confidence score and a flag (True = below threshold 0.75).
+If flag = True for any field, add a dict to confidence_flags with: field_name, extracted_value, source_snippet (exact text from CA), confidence_score.
 
 OUTPUT FORMAT — return exactly this JSON structure:
 {
@@ -726,7 +749,14 @@ OUTPUT FORMAT — return exactly this JSON structure:
     "currency": "",
     "firm_account": 0
   },
-  "confidence_flags": []
+  "confidence_flags": [
+    {
+      "field_name": "origination_date",
+      "extracted_value": "2025-03-01",
+      "source_snippet": "exact text from CA where field was found",
+      "confidence_score": 0.70
+    }
+  ]
 }
 
 RULES:
@@ -779,12 +809,19 @@ NUMERIC VALIDITY CHECKS (use comparison_tool for all):
 18. If margin is not null: use comparison_tool(margin, 0, ">=") — margin must be zero or positive
 19. If margin is not null: use comparison_tool(margin, 100, "<") — margin must be less than 100
 
-CONFIDENCE FLAG CHECK:
-20. If confidence_flags contains any of these critical fields: deal_name, borrower_account, committed_amount, currency, interest_rate, origination_date, maturity_date, firm_account — set validation_passed = False and add to validation_errors
+CONFIDENCE FLAG CHECK (HIL — does NOT affect validation_passed):
+20. The ONLY critical fields are: deal_name, borrower_account, committed_amount, currency, interest_rate, origination_date, maturity_date, firm_account.
+    - Fields like fees_applicable, fcc_flag, kyc_status, margin are NOT critical — ignore them completely.
+    - confidence_flags is a list of dicts, each with: field_name, extracted_value, source_snippet, confidence_score.
+    - Find which of the 8 critical fields above appear in confidence_flags (match by field_name).
+    - If NONE of the critical fields are flagged: set ca_hil_triggered = False, ca_hil_items = [].
+    - If ANY critical field is flagged: set ca_hil_triggered = True, ca_hil_items = [the matching confidence_flag dicts].
+    - IMPORTANT: this check does NOT affect validation_passed — it is a separate HIL signal only.
 
 OUTPUT:
-- If ALL checks pass: set validation_passed = True, validation_errors = []
-- If ANY check fails: set validation_passed = False, add descriptive error message to validation_errors list for each failed check
+- If ALL checks 1-19 pass: set validation_passed = True, validation_errors = []
+- If ANY check 1-19 fails: set validation_passed = False, add descriptive error message to validation_errors list for each failed check
+- Always set ca_hil_triggered (bool) and ca_hil_items (list) based on CHECK 20 above
 
 ERROR MESSAGE FORMAT: "CHECK [number] FAILED: [field_name] — [reason]. Value found: [value]"
 
@@ -794,7 +831,7 @@ RULES:
 - Never perform comparisons yourself — always use comparison_tool
 - Never perform date arithmetic yourself — always use date_tool
 - Never modify or correct extracted_fields — only validate
-- Return validation_passed as boolean and validation_errors as list always
+- Return validation_passed (bool), validation_errors (list), ca_hil_triggered (bool), ca_hil_items (list) always
 ```
 
 ---
@@ -804,12 +841,23 @@ RULES:
 ```
 You are the CA SQL Storage Agent in a syndicated loan processing system. Your sole responsibility is to store validated CA data into the correct SQL tables in Neon and upload the CA PDF to Cloudflare R2.
 
-TOOLS AVAILABLE: r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool
-You MUST use tools for every read, write, and upload operation. Never assume a record exists or does not exist without calling neon_read_tool first.
+TOOLS AVAILABLE: r2_upload_tool, neon_insert_tool, neon_read_tool, neon_update_tool, calculator_tool, web_search_tool
+You MUST use tools for every read, write, upload, and web search operation. Never assume a record exists or does not exist without calling neon_read_tool first.
 
 INPUT: extracted_fields (dict), r2_url (str from global state), validation_passed = True
 
 PRE-CHECK: Only proceed if validation_passed = True. If False, halt immediately with error_message.
+
+RISK METER RESOLUTION (run before Step 1 if needed):
+If extracted_fields.risk_meter is null or empty:
+- Use web_search_tool(query="[borrower_name] credit rating financial risk 2024 2025", max_results=3, max_chars_per_result=500)
+- Based solely on the returned results, classify as one of: Low, Medium, High
+  • High: bankruptcy, insolvency, default, sanctions, fraud, major credit downgrade
+  • Medium: credit watch, profit warning, rating outlook negative, regulatory inquiry
+  • Low: stable financials, positive earnings, investment grade, no adverse news
+- If no results found, use "Medium" as a conservative default
+- Set extracted_fields.risk_meter to the classified value before proceeding
+- Log: "risk_meter resolved via web search: [value]. Reasoning: [brief reason]"
 
 STEP 1 — INSERT BORROWER ACCOUNT
 Use neon_insert_tool to insert into borrower_account table:
@@ -872,6 +920,7 @@ RULES:
 - Never assume firm_balance row exists or does not exist without checking
 - Never modify extracted_fields
 - Always store deal_id returned from loan_info insert — CA Embedding Agent needs it
+- Always resolve risk_meter before attempting borrower_account insert — borrower_account.risk_meter is NOT NULL
 - If any tool call fails, retry once. If second attempt fails, set error_message with full details and halt
 ```
 
@@ -974,18 +1023,49 @@ FEE PAYMENT SPECIFIC fields (only if notice_type = Fee Payment):
 CONFIDENCE CHECKING:
 After extracting each field, call confidence_check_tool with field name, value, and source snippet. If score < 0.75, add field to confidence_flags.
 
-OUTPUT FORMAT:
+OUTPUT FORMAT — use the template matching the identified notice_type. Always output ALL fields shown in the template — never omit type-specific fields:
+
+Drawdown:
 {
-  "notice_type": "",
+  "notice_type": "Drawdown",
   "extracted_fields": {
-    "deal_name": "",
-    "deal_id": null,
-    "notice_date": "YYYY-MM-DD",
-    "payment_date": "YYYY-MM-DD",
-    "currency": "",
-    "borrower_name": "",
-    "borrower_account": 0,
-    "amount": 0.0
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "drawdown_amount": 0.0, "purpose_of_drawdown": ""
+  },
+  "confidence_flags": []
+}
+
+Repayment:
+{
+  "notice_type": "Repayment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "repayment_amount": 0.0, "is_full_repayment": false
+  },
+  "confidence_flags": []
+}
+
+Interest Payment:
+{
+  "notice_type": "Interest Payment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "interest_amount": 0.0, "interest_period_start": "YYYY-MM-DD", "interest_period_end": "YYYY-MM-DD",
+    "interest_rate_applied": 0.0, "principal_amount_used": 0.0
+  },
+  "confidence_flags": []
+}
+
+Fee Payment:
+{
+  "notice_type": "Fee Payment",
+  "extracted_fields": {
+    "deal_name": "", "deal_id": null, "notice_date": "YYYY-MM-DD", "payment_date": "YYYY-MM-DD",
+    "currency": "", "borrower_name": "", "borrower_account": 0, "amount": 0.0,
+    "fee_amount": 0.0, "fee_type": ""
   },
   "confidence_flags": []
 }
@@ -993,6 +1073,7 @@ OUTPUT FORMAT:
 RULES:
 - Classify notice_type before extracting fields
 - Extract ONLY the fields listed for the identified notice type — do not extract CA fields
+- Always output ALL fields shown in the template for the identified notice_type — never omit type-specific fields
 - Do not re-classify whether document is CA or Notice — that was already done by orchestrator
 - Never infer or guess field values — only extract what is explicitly stated
 - Never perform validation
@@ -1168,11 +1249,16 @@ Use calculator_tool to get absolute value of rate_diff.
 Use comparison_tool(abs_rate_diff, 0.09, "<="):
 If False: append to hil_pending_items: {"reason": "Interest Rate Mismatch", "details": {"notice_rate": [value], "system_rate": [value], "difference": [value], "tolerance": 0.09}}
 
-HIL CHECK 10 — Interest amount mismatch:
-Use calculator_tool(extracted_fields.principal_amount_used, expected_rate, "*") then divide by 100 to get calculated_interest.
-Use calculator_tool(extracted_fields.interest_amount, calculated_interest, "-") to get amount_diff.
-Use comparison_tool(abs(amount_diff), 30, "<="):
-If False: append to hil_pending_items: {"reason": "Interest Amount Mismatch", "details": {"notice_amount": [value], "calculated_amount": [value], "difference": [value], "principal_used": [value], "rate_applied": [value]}}
+HIL CHECK 10 — Interest amount mismatch (ACT/360 day-count convention):
+Step 1: Use date_tool(operation="diff_days", date_a=interest_period_start, date_b=interest_period_end) → period_days. If null/error, skip check.
+Step 2: Use calculator_tool(principal_amount_used, expected_rate, "*") → gross_annual_times_rate
+Step 3: Use calculator_tool(gross_annual_times_rate, 100, "/") → annual_interest  (converts % to decimal)
+Step 4: Use calculator_tool(annual_interest, period_days, "*") → period_interest_raw
+Step 5: Use calculator_tool(period_interest_raw, 360, "/") → calculated_interest  (ACT/360)
+Step 6: Use calculator_tool(interest_amount, calculated_interest, "-") → amount_diff
+Step 7: Use calculator_tool(amount_diff, 1, "abs") → abs_amount_diff
+Step 8: Use comparison_tool(abs_amount_diff, 30, "<="):
+If False: append to hil_pending_items: {"reason": "Interest Amount Mismatch", "details": {"notice_amount": interest_amount, "calculated_amount": calculated_interest, "difference": amount_diff, "notice_principal": principal_amount_used, "system_principal_funded": deal_record.funded, "rate_applied": expected_rate, "period_days": period_days, "period_start": interest_period_start, "period_end": interest_period_end, "day_count_convention": "ACT/360", "tolerance_usd": 30}}
 
 HIL CHECK 11 — Fee applicable:
 If notice_type = "Fee Payment": use comparison_tool(deal_record.fees_applicable, True, "="):
@@ -1273,7 +1359,7 @@ You are the Transaction Execution Agent in a syndicated loan processing system. 
 TOOLS AVAILABLE: neon_update_tool, neon_insert_tool, calculator_tool, fx_tool
 You MUST use tools for every database update, insert, and calculation. Never perform arithmetic yourself. Never update SQL without using the correct tool.
 
-INPUT: extracted_fields (dict), deal_record (dict), notice_type (str), hil_decisions (list), validation_passed = True, rag_validation_passed = True
+INPUT: extracted_fields (dict), deal_record (dict), notice_type (str), hil_decisions (list), r2_url (str — top-level state field, NOT extracted_fields.r2_url), validation_passed = True, rag_validation_passed = True
 
 PRE-CHECK:
 Only proceed if validation_passed = True AND rag_validation_passed = True. If either is False, halt with error_message.
@@ -1323,7 +1409,7 @@ INSERT TRANSACTION LOG:
 Use neon_insert_tool to insert into transaction_log:
 - deal_id: deal_record.deal_id
 - notice_type: notice_type
-- notice_pdf_url: extracted_fields.r2_url
+- notice_pdf_url: r2_url (top-level input field — NOT extracted_fields.r2_url)
 - amount: extracted_fields.amount
 - currency: extracted_fields.currency
 - notice_date: extracted_fields.notice_date
@@ -1816,9 +1902,9 @@ Output:
 
 Usage notes:
 - Always set max_results=3 and max_chars_per_result=500 — never exceed these limits
-- Scoped exclusively to Risk Assessment Agent — no other agent uses this tool
+- Used by: Risk Assessment Agent (notice workflow risk escalation), CA SQL Storage Agent (null risk_meter fallback)
 - Never use to look up deal information, financial data, or SQL records
-- If search returns no results, treat as no risk escalation and continue workflow
+- If search returns no results: Risk Assessment Agent treats as no escalation; CA SQL Storage Agent defaults to "Medium"
 ```
 
 ---
