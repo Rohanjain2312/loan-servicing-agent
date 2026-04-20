@@ -96,17 +96,19 @@ NUMERIC VALIDITY CHECKS (use comparison_tool for all):
 18. If margin is not null: use comparison_tool(margin, 0, ">=") — margin must be zero or positive
 19. If margin is not null: use comparison_tool(margin, 100, "<") — margin must be less than 100
 
-CONFIDENCE FLAG CHECK:
+CONFIDENCE FLAG CHECK (HIL — does NOT affect validation_passed):
 20. The ONLY critical fields are: deal_name, borrower_account, committed_amount, currency, interest_rate, origination_date, maturity_date, firm_account.
     - Fields like fees_applicable, fcc_flag, kyc_status, margin are NOT critical — ignore them completely.
-    - Find which of the 8 critical fields above appear in confidence_flags.
-    - If NONE of them appear → CHECK 20 PASSES.
-    - If ANY of them appear → CHECK 20 FAILS. Error message MUST name the specific fields:
-      "CHECK 20 FAILED: confidence_flags — low confidence on critical fields: [<list each failing field name>]. Review extraction for these fields."
+    - confidence_flags is a list of dicts, each with: field_name, extracted_value, source_snippet, confidence_score.
+    - Find which of the 8 critical fields above appear in confidence_flags (match by field_name).
+    - If NONE of the critical fields are flagged: set ca_hil_triggered = False, ca_hil_items = [].
+    - If ANY critical field is flagged: set ca_hil_triggered = True, ca_hil_items = [the matching confidence_flag dicts].
+    - IMPORTANT: this check does NOT affect validation_passed — it is a separate HIL signal only.
 
 OUTPUT:
-- If ALL checks pass: set validation_passed = True, validation_errors = []
-- If ANY check fails: set validation_passed = False, add descriptive error message to validation_errors list for each failed check
+- If ALL checks 1-19 pass: set validation_passed = True, validation_errors = []
+- If ANY check 1-19 fails: set validation_passed = False, add descriptive error message to validation_errors list for each failed check
+- Always set ca_hil_triggered (bool) and ca_hil_items (list) based on CHECK 20 above
 
 ERROR MESSAGE FORMAT: "CHECK [number] FAILED: [field_name] — [reason]. Value found: [value]"
 
@@ -116,7 +118,7 @@ RULES:
 - Never perform comparisons yourself — always use comparison_tool
 - Never perform date arithmetic yourself — always use date_tool
 - Never modify or correct extracted_fields — only validate
-- Return validation_passed as boolean and validation_errors as list always"""
+- Return validation_passed (bool), validation_errors (list), ca_hil_triggered (bool), ca_hil_items (list) always"""
 
 
 def ca_validation_agent(state: dict) -> dict:
@@ -130,7 +132,8 @@ def ca_validation_agent(state: dict) -> dict:
 extracted_fields: {json.dumps(state['extracted_fields'], default=str)}
 confidence_flags: {json.dumps(state.get('confidence_flags', []))}
 
-Run all validation checks and return JSON with validation_passed (bool) and validation_errors (list)."""
+Run all validation checks and return JSON with: validation_passed (bool), validation_errors (list),
+ca_hil_triggered (bool), ca_hil_items (list of confidence_flag dicts for critical fields)."""
 
     result = agent.invoke({
         "messages": [
@@ -153,4 +156,6 @@ Run all validation checks and return JSON with validation_passed (bool) and vali
     return {
         "validation_passed": output.get("validation_passed", False),
         "validation_errors": output.get("validation_errors", []),
+        "ca_hil_triggered": output.get("ca_hil_triggered", False),
+        "ca_hil_items": output.get("ca_hil_items", []),
     }

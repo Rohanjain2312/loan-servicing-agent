@@ -43,7 +43,8 @@ FIELD LIST WITH ALTERNATIVE LABELS:
 19. firm_account — look for: "Bank Account", "Lender Account", "Firm Account", "Bank Reference", "Agent Account Number"
 
 CONFIDENCE CHECKING:
-After extracting each field, call confidence_check_tool with the field name, extracted value, and the source text snippet where you found it. confidence_check_tool returns a confidence score. If score < 0.75 for any field, add that field name to the confidence_flags list.
+After extracting each field, call confidence_check_tool with the field name, extracted value, and the source text snippet where you found it. confidence_check_tool returns a confidence score and a flag (True = below threshold 0.75).
+If flag = True for any field, add a dict to confidence_flags with: field_name, extracted_value, source_snippet (exact text from CA), confidence_score.
 
 OUTPUT FORMAT — return exactly this JSON structure:
 {
@@ -68,7 +69,14 @@ OUTPUT FORMAT — return exactly this JSON structure:
     "currency": "",
     "firm_account": 0
   },
-  "confidence_flags": []
+  "confidence_flags": [
+    {
+      "field_name": "origination_date",
+      "extracted_value": "2025-03-01",
+      "source_snippet": "exact text from CA where field was found",
+      "confidence_score": 0.70
+    }
+  ]
 }
 
 RULES:

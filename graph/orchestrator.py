@@ -1,8 +1,11 @@
 """Main orchestrator graph: classify PDF → route to CA or Notice subgraph.
 
-All notice-branch HIL interrupt() calls live HERE (at the top-level graph)
-so that LangSmith Studio's Resume correctly restores state and continues
-execution instead of restarting from the beginning.
+All HIL interrupt() calls live HERE (at the top-level graph) so that
+LangSmith Studio's Resume correctly restores state and continues execution
+instead of restarting from the beginning.
+
+CA path:  ca_branch (extract+validate) → [ca_confidence_hil?] → ca_sql_storage → ca_embedding → ca_end → end
+Notice path: notice_branch (extract+risk+validate) → [risk/validation/drawdown HIL?] → transaction_execution → notice_end → end
 """
 
 import json
@@ -20,8 +23,10 @@ from langgraph.types import interrupt
 
 from tools.pdf_extract_tool import pdf_extract_tool
 from tools.r2_upload_tool import r2_upload_tool
-from graph.ca_branch import ca_app, CAState
+from graph.ca_branch import ca_app
 from graph.notice_branch import notice_app
+from agents.ca_sql_storage_agent import ca_sql_storage_agent
+from agents.ca_embedding_agent import ca_embedding_agent
 from agents.transaction_execution_agent import transaction_execution_agent
 
 load_dotenv(override=True)
@@ -48,18 +53,30 @@ class GlobalState(TypedDict):
     r2_url: str
     error_message: Annotated[Optional[str], _keep_last_error]
 
-    # === Notice branch — populated by notice_branch subgraph ===
-    notice_type: str
+    # === CA branch — populated by ca_branch subgraph ===
     extracted_fields: dict
     confidence_flags: list
+    validation_passed: bool
+    validation_errors: Annotated[list, add]
+    ca_hil_triggered: bool
+    ca_hil_items: list
+
+    # === CA HIL decisions — populated by ca_confidence_hil_node ===
+    ca_hil_decisions: Annotated[list, add]
+
+    # === CA execution — populated by ca_sql_storage and ca_embedding nodes ===
+    deal_id: Optional[int]
+    ca_sql_storage_done: bool
+    ca_embedding_done: bool
+
+    # === Notice branch — populated by notice_branch subgraph ===
+    notice_type: str
     deal_record: dict
     borrower_record: dict
     risk_assessment_result: dict
     risk_hil_triggered: bool
     hard_stop: bool
     hard_stop_reason: Optional[str]
-    validation_passed: bool
-    validation_errors: Annotated[list, add]
     hil_triggered: bool
     hil_pending_items: Annotated[list, add]
     rag_results: list
@@ -166,25 +183,85 @@ def orchestrator_node(state: GlobalState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CA branch wrapper (no HIL — invoke subgraph directly)
+# CA branch wrapper — pure computation subgraph (extract + validate only)
 # ---------------------------------------------------------------------------
 
 def run_ca_branch(state: GlobalState) -> dict:
-    """Invoke CA subgraph. CA has no HIL so a direct .invoke() is fine."""
-    ca_input: CAState = {
+    """Invoke CA preprocessing subgraph (extract + validate). HIL and storage handled by parent."""
+    result = ca_app.invoke({
         "raw_text": state["raw_text"],
         "r2_url": state["r2_url"],
-        "extracted_fields": {},
-        "confidence_flags": [],
-        "validation_passed": False,
-        "validation_errors": [],
-        "sql_storage_done": False,
-        "embedding_done": False,
-        "deal_id": None,
-        "error_message": None,
+    })
+    return {
+        "extracted_fields": result.get("extracted_fields", {}),
+        "confidence_flags": result.get("confidence_flags", []),
+        "validation_passed": result.get("validation_passed", False),
+        "validation_errors": result.get("validation_errors", []),
+        "ca_hil_triggered": result.get("ca_hil_triggered", False),
+        "ca_hil_items": result.get("ca_hil_items", []),
+        "error_message": result.get("error_message"),
     }
-    result = ca_app.invoke(ca_input)
-    return {"error_message": result.get("error_message")}
+
+
+# ---------------------------------------------------------------------------
+# CA HIL node — interrupt() lives HERE so Studio Resume works
+# ---------------------------------------------------------------------------
+
+def ca_confidence_hil_node(state: GlobalState) -> dict:
+    """Interrupt: one or more CA fields extracted with low confidence — human review required."""
+    items = state.get("ca_hil_items", [])
+    payload = {
+        "trigger_reason": "Low confidence extraction on critical CA fields — review and approve or deny",
+        "instruction": "Each item shows: field_name, extracted_value (what the agent read), source_snippet (exact CA text), confidence_score. Approve to accept extractions and proceed with storage. Deny to halt.",
+        "items": items,
+    }
+    decision = interrupt(payload)
+    decision_str = (
+        decision.get("decision", "Approved") if isinstance(decision, dict)
+        else str(decision).strip() if decision
+        else "Approved"
+    )
+    return {
+        "ca_hil_decisions": [
+            {
+                "field_name": item.get("field_name", ""),
+                "decision": decision_str,
+                "extracted_value": item.get("extracted_value"),
+                "source_snippet": item.get("source_snippet", ""),
+                "confidence_score": item.get("confidence_score"),
+            }
+            for item in items
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# CA execution nodes (promoted to parent so they run after HIL checkpoint)
+# ---------------------------------------------------------------------------
+
+def ca_sql_storage_node(state: GlobalState) -> dict:
+    """Run CA SQL storage agent at parent level."""
+    return ca_sql_storage_agent(state)
+
+
+def ca_embedding_node(state: GlobalState) -> dict:
+    """Run CA embedding agent at parent level."""
+    return ca_embedding_agent(state)
+
+
+def ca_end_node(state: GlobalState) -> dict:
+    """Terminal CA node — logs final outcome."""
+    if state.get("error_message"):
+        print(f"[CA] FAILED: {state['error_message']}")
+    elif not state.get("validation_passed", False):
+        print(f"[CA] VALIDATION FAILED: {state.get('validation_errors', [])}")
+    elif any(d.get("decision") == "Denied" for d in state.get("ca_hil_decisions", [])):
+        print(f"[CA] HALTED — confidence HIL denied by reviewer")
+    elif state.get("ca_embedding_done"):
+        print(f"[CA] SUCCESS — deal_id={state.get('deal_id')} stored and embedded")
+    else:
+        print(f"[CA] PARTIAL — deal_id={state.get('deal_id')} stored, embedding incomplete")
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +275,12 @@ def risk_hil_node(state: GlobalState) -> dict:
         **state.get("risk_assessment_result", {}),
     }
     decision = interrupt(payload)
-    # Handle dict {"decision": "Approved"}, plain string "Approved", or empty/null
     if isinstance(decision, dict):
         decision_str = decision.get("decision", "Denied")
     elif decision:
         decision_str = str(decision).strip()
     else:
-        decision_str = "Denied"  # empty input = conservative default for risk escalation
+        decision_str = "Denied"
     return {
         "hil_decisions": [
             {
@@ -226,9 +302,6 @@ def validation_hil_node(state: GlobalState) -> dict:
     decision = interrupt(payload)
     decision_str = decision.get("decision", "Approved") if isinstance(decision, dict) else str(decision).strip() if decision else "Approved"
     items = state.get("hil_pending_items", [])
-    # Guard: if rag_validation_passed=False triggered this node but items list is somehow
-    # empty, add a synthetic entry so hil_decisions is non-empty and the pre-check in
-    # transaction_execution_agent can see the human approved the override.
     if not items:
         items = [{"reason": "RAG/Validation Override", "details": {"rag_validation_passed": state.get("rag_validation_passed", True)}}]
     return {
@@ -278,7 +351,7 @@ def drawdown_hil_node(state: GlobalState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Pass-through nodes
+# Pass-through and terminal nodes
 # ---------------------------------------------------------------------------
 
 def _drawdown_check_passthrough(state: GlobalState) -> dict:
@@ -323,6 +396,39 @@ def route_by_doc_type(state: GlobalState) -> str:
     return "end_node"
 
 
+# ── CA routing ──────────────────────────────────────────────────────────────
+
+def route_after_ca_branch(state: GlobalState) -> str:
+    """After CA extract+validate: halt on errors, HIL on low confidence, else store."""
+    if state.get("error_message"):
+        return "ca_end_node"
+    if not state.get("validation_passed", False):
+        return "ca_end_node"
+    if state.get("ca_hil_triggered", False):
+        return "ca_confidence_hil_node"
+    return "ca_sql_storage_node"
+
+
+def route_after_ca_hil(state: GlobalState) -> str:
+    """After CA confidence HIL — approved stores, denied halts."""
+    decisions = state.get("ca_hil_decisions", [])
+    if any(d.get("decision") == "Denied" for d in decisions):
+        return "ca_end_node"
+    return "ca_sql_storage_node"
+
+
+def route_after_ca_sql(state: GlobalState) -> str:
+    """Only embed if SQL storage succeeded and deal_id was returned."""
+    if state.get("error_message"):
+        return "ca_end_node"
+    deal_id = state.get("deal_id")
+    if not deal_id or deal_id <= 0:
+        return "ca_end_node"
+    return "ca_embedding_node"
+
+
+# ── Notice routing ───────────────────────────────────────────────────────────
+
 def route_after_notice_processing(state: GlobalState) -> str:
     """After notice subgraph completes: priority order for HIL routing."""
     if state.get("hard_stop", False):
@@ -337,12 +443,10 @@ def route_after_notice_processing(state: GlobalState) -> str:
 
 
 def route_after_risk_hil(state: GlobalState) -> str:
-    """After risk HIL — denied halts; approved checks if validation HIL also needed."""
     decisions = state.get("hil_decisions", [])
     risk_dec = next((d for d in decisions if d.get("reason") == "Risk Escalation to High"), None)
     if risk_dec and risk_dec.get("decision") == "Denied":
         return "notice_end_node"
-    # Approved — check if validation HIL is also pending
     pending = state.get("hil_pending_items", [])
     rag_passed = state.get("rag_validation_passed", True)
     if pending or not rag_passed:
@@ -351,25 +455,20 @@ def route_after_risk_hil(state: GlobalState) -> str:
 
 
 def route_after_validation_hil(state: GlobalState) -> str:
-    """After validation HIL — any Denied decision halts execution."""
     decisions = state.get("hil_decisions", [])
-    validation_decisions = [
-        d for d in decisions if d.get("reason") != "Risk Escalation to High"
-    ]
+    validation_decisions = [d for d in decisions if d.get("reason") != "Risk Escalation to High"]
     if any(d.get("decision") == "Denied" for d in validation_decisions):
         return "notice_end_node"
     return "drawdown_check_node"
 
 
 def route_drawdown_check(state: GlobalState) -> str:
-    """Drawdown always requires explicit approval; all other types go straight to execution."""
     if state.get("notice_type") == "Drawdown":
         return "drawdown_hil_node"
     return "transaction_execution_node"
 
 
 def route_after_drawdown_hil(state: GlobalState) -> str:
-    """After Drawdown HIL — approved executes, denied halts."""
     decisions = state.get("hil_decisions", [])
     dd_dec = next((d for d in decisions if d.get("reason") == "Drawdown Approval"), None)
     if dd_dec and dd_dec.get("decision") == "Denied":
@@ -385,23 +484,31 @@ main_builder = StateGraph(GlobalState, input=InputState)
 
 # Shared nodes
 main_builder.add_node("orchestrator_node", orchestrator_node)
-main_builder.add_node("ca_branch", run_ca_branch)
 main_builder.add_node("end_node", end_node)
 
-# Notice processing subgraph (pure computation — no interrupt() inside)
-main_builder.add_node("notice_branch", notice_app)
+# ── CA path ──────────────────────────────────────────────────────────────────
+# Subgraph: pure extract + validate (no interrupt inside)
+main_builder.add_node("ca_branch", run_ca_branch)
+# HIL node for low-confidence fields (interrupt lives here, at parent level)
+main_builder.add_node("ca_confidence_hil_node", ca_confidence_hil_node)
+# Execution nodes promoted to parent so they run after HIL checkpoint
+main_builder.add_node("ca_sql_storage_node", ca_sql_storage_node)
+main_builder.add_node("ca_embedding_node", ca_embedding_node)
+main_builder.add_node("ca_end_node", ca_end_node)
 
-# Notice HIL nodes (interrupt() lives here, at the top-level graph)
+# ── Notice path ───────────────────────────────────────────────────────────────
+# Subgraph: pure extract + risk + validate (no interrupt inside)
+main_builder.add_node("notice_branch", notice_app)
+# HIL nodes (interrupt lives here, at parent level)
 main_builder.add_node("risk_hil_node", risk_hil_node)
 main_builder.add_node("validation_hil_node", validation_hil_node)
 main_builder.add_node("drawdown_hil_node", drawdown_hil_node)
-
-# Notice pass-through and terminal nodes
+# Pass-through and terminal nodes
 main_builder.add_node("drawdown_check_node", _drawdown_check_passthrough)
 main_builder.add_node("transaction_execution_node", transaction_execution_agent)
 main_builder.add_node("notice_end_node", notice_end_node)
 
-# ── Edges ──────────────────────────────────────────────────────────────────
+# ── Edges ─────────────────────────────────────────────────────────────────────
 
 main_builder.add_edge(START, "orchestrator_node")
 main_builder.add_conditional_edges(
@@ -411,7 +518,23 @@ main_builder.add_conditional_edges(
 )
 
 # CA path
-main_builder.add_edge("ca_branch", "end_node")
+main_builder.add_conditional_edges(
+    "ca_branch",
+    route_after_ca_branch,
+    ["ca_confidence_hil_node", "ca_sql_storage_node", "ca_end_node"],
+)
+main_builder.add_conditional_edges(
+    "ca_confidence_hil_node",
+    route_after_ca_hil,
+    ["ca_sql_storage_node", "ca_end_node"],
+)
+main_builder.add_conditional_edges(
+    "ca_sql_storage_node",
+    route_after_ca_sql,
+    ["ca_embedding_node", "ca_end_node"],
+)
+main_builder.add_edge("ca_embedding_node", "ca_end_node")
+main_builder.add_edge("ca_end_node", "end_node")
 
 # Notice path: subgraph → HIL routing at parent level
 main_builder.add_conditional_edges(
