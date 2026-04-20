@@ -111,7 +111,7 @@ Step 5: Use calculator_tool(period_interest_raw, 360, "/") → calculated_intere
 Step 6: Use calculator_tool(extracted_fields.interest_amount, calculated_interest, "-") → amount_diff
 Step 7: Use calculator_tool(amount_diff, 1, "abs") → abs_amount_diff  (use "abs" operation)
 Step 8: Use comparison_tool(abs_amount_diff, 30, "<="):
-If False: append to hil_pending_items: {"reason": "Interest Amount Mismatch", "details": {"notice_amount": extracted_fields.interest_amount, "calculated_amount": calculated_interest, "difference": amount_diff, "principal_used": extracted_fields.principal_amount_used, "rate_applied": expected_rate, "period_days": period_days, "period_start": extracted_fields.interest_period_start, "period_end": extracted_fields.interest_period_end, "day_count_convention": "ACT/360", "tolerance_usd": 30}}
+If False: append to hil_pending_items: {"reason": "Interest Amount Mismatch", "details": {"notice_amount": extracted_fields.interest_amount, "calculated_amount": calculated_interest, "difference": amount_diff, "notice_principal": extracted_fields.principal_amount_used, "system_principal_funded": deal_record.funded, "rate_applied": expected_rate, "period_days": period_days, "period_start": extracted_fields.interest_period_start, "period_end": extracted_fields.interest_period_end, "day_count_convention": "ACT/360", "tolerance_usd": 30}}
 
 HIL CHECK 11 — Fee applicable:
 If notice_type = "Fee Payment": use comparison_tool(deal_record.fees_applicable, True, "="):
